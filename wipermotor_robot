@@ -1,0 +1,217 @@
+// bigwipermotor robot code
+
+// to enable serial writes of debugLevel messages, set debugLevel>0
+int debugLevel=1;
+
+// pwm min/max/centers - if the motor control seems out of whack,
+// turn on debugLevel=2 and recalibrate these numbers
+int yMax=850;
+int yMin=1720;
+int xMin=850;
+int xMax=1703;
+int xCenter=1272;
+int yCenter=1280;
+
+// fan pin
+int fanDefault=64;
+int fanFast=200;
+int fanPin=3;
+int fanSpeed=fanDefault;
+unsigned long lastMoved=0;
+int fanTimeoutSecs=15;
+
+// motor driver pins - 8-13
+int pinI1=8;//define I1 interface
+int pinI2=11;//define I2 interface 
+int speedpinA=9;//enable motor A
+int pinI3=12;//define I3 interface 
+int pinI4=13;//define I4 interface 
+int speedpinB=10;//enable motor B
+
+// pwm input pins init vars for pwm
+int elePin = 6;
+int ailPin = 7;
+unsigned long gearLen, ailLen, eleLen;
+int ailPos, elePos, ailPosL, ailPosR;
+
+// misc globals
+String action;
+
+void setup() {
+	// output to serial if debugLevel>0
+	if (debugLevel>0){
+		Serial.begin(9600); // set up Serial library at 9600 bps
+		Serial.println("Program started..."); 
+	}
+
+	// setup fan off
+	pinMode(fanPin, OUTPUT);
+	fanSpeed=0;
+	analogWrite(fanPin, fanSpeed);
+
+	// setup RF i/o
+	pinMode(ailPin, INPUT);
+	pinMode(elePin, INPUT);
+
+	// setup motor i/o
+	pinMode(pinI1,OUTPUT);
+	pinMode(pinI2,OUTPUT);
+	pinMode(speedpinA,OUTPUT);
+	pinMode(pinI3,OUTPUT);
+	pinMode(pinI4,OUTPUT);
+	pinMode(speedpinB,OUTPUT);
+
+  delay(20);
+}
+
+void loop() {
+	action="er9x";
+
+	// is fan running?
+	if (fanSpeed>0){
+		// see if it's time to turn it off
+		if (millis()>(lastMoved+(fanTimeoutSecs*1000))){
+			// fan has been running for x seconds after the motors stopped, stop it
+			fanSpeed=0;
+			analogWrite(fanPin, fanSpeed);
+		}
+	}
+
+	// get input from pwm
+	ailLen = pulseIn(ailPin, HIGH);
+	eleLen = pulseIn(elePin, HIGH);
+
+	if (debugLevel>1){
+		Serial.print("x=");
+		Serial.print(ailLen);
+		Serial.print(" y=");
+		Serial.println(eleLen);
+	}
+		
+	ailPos = int(map(ailLen, xMin, xMax, -100, 100));
+	elePos = int(map(eleLen, yMax, yMin, -100, 100));
+	if (ailPos<-100) ailPos=-100;
+	if (ailPos>100) ailPos=100;
+	if (elePos<-100) elePos=-100;
+	if (elePos>100) elePos=100;
+	if (ailPos>-5 && ailPos<5) ailPos=0;
+	if (elePos>-5 && elePos<5) elePos=0;
+
+	if (action=="er9x"){
+		if (int(elePos)==0){
+			// either spinning or stopped
+
+			if (ailPos>0){
+				// spin right
+				if (debugLevel>0) Serial.println("spin right");
+				digitalWrite(pinI1,LOW);//turn left clockwise
+				digitalWrite(pinI2,HIGH);
+				digitalWrite(pinI3,HIGH);//turn right clockwise
+				digitalWrite(pinI4,LOW);
+
+				analogWrite(speedpinA,map(ailPos, 0, 100, 0, 255));
+				analogWrite(speedpinB,map(ailPos, 0, 100, 0, 255));
+
+				// spin fan
+				fanSpeed=map(ailPos, 0, 100, fanDefault, fanFast);
+				analogWrite(fanPin, fanSpeed);
+				if (debugLevel>0) {
+					Serial.print("R fan=");
+					Serial.println(fanSpeed);
+				}
+				lastMoved=millis();
+			} else if (ailPos<0) {
+				// spin left
+				if (debugLevel>0) Serial.println("spin left");
+				digitalWrite(pinI2,LOW);//turn left anticlockwise
+				digitalWrite(pinI1,HIGH);
+				digitalWrite(pinI4,HIGH);//turn right anticlockwise
+				digitalWrite(pinI3,LOW);
+
+				analogWrite(speedpinA,map(ailPos, 0, -100, 0, 255));
+				analogWrite(speedpinB,map(ailPos, 0, -100, 0, 255));
+
+				// spin fan
+				fanSpeed=map(ailPos, 0, -100, fanDefault, fanFast);
+				analogWrite(fanPin, fanSpeed);
+				if (debugLevel>0) {
+					Serial.print("L fan=");
+					Serial.println(fanSpeed);
+				}
+				lastMoved=millis();
+			} else {
+				// stop
+				//Serial.println("stop");
+				digitalWrite(pinI1,HIGH);//turn left forward
+				digitalWrite(speedpinA,LOW);
+				digitalWrite(speedpinB,LOW);
+
+				// slow fan to default
+				if (fanSpeed>0){
+					// fan is running, we probably just now stopped
+					fanSpeed=fanDefault;
+					analogWrite(fanPin, fanSpeed);
+					if (debugLevel>0) {
+						Serial.print("S fan=");
+						Serial.println(fanSpeed);
+					}
+				}
+			}
+		} else if (elePos>0){
+			// move forward
+			if (debugLevel>0) Serial.print("forward ");
+			if (debugLevel>1) {
+				Serial.print(elePos);
+				Serial.print(":");
+				Serial.println(ailPos);
+			}
+
+			digitalWrite(pinI1,LOW);//turn left clockwise
+			digitalWrite(pinI2,HIGH);
+			digitalWrite(pinI4,HIGH);//turn right anticlockwise
+			digitalWrite(pinI3,LOW);
+			
+			ailPosL=ailPos; if (ailPosL>0) ailPosL=0;
+			analogWrite(speedpinA,map(elePos, 0, 100, 0, map(ailPosL, 0, -100, 255, 0)));
+
+			ailPosR=ailPos; if (ailPosR<0) ailPosR=0;
+			analogWrite(speedpinB,map(elePos, 0, 100, 0, map(ailPosR, 0, 100, 255, 0)));
+
+			// spin fan
+			fanSpeed=map(elePos, 0, 100, fanDefault, fanFast);
+			analogWrite(fanPin, fanSpeed);
+			if (debugLevel>0) {
+				Serial.print("F fan=");
+				Serial.println(fanSpeed);
+			}
+			lastMoved=millis();
+		} else if (elePos<0) {
+			// move backward
+			if (debugLevel>0) Serial.print("backward");
+			if (debugLevel>1) {
+				Serial.print(elePos);
+				Serial.print(":");
+				Serial.println(ailPos);
+			}
+			digitalWrite(pinI4,LOW);//turn right clockwise
+			digitalWrite(pinI3,HIGH);
+			digitalWrite(pinI1,HIGH);//turn left anticlockwise
+			digitalWrite(pinI2,LOW);
+			
+			ailPosL=ailPos; if (ailPosL>0) ailPosL=0;
+			analogWrite(speedpinA,map(elePos, 0, -100, 0, map(ailPosL, 0, -100, 255, 0)));
+
+			ailPosR=ailPos; if (ailPosR<0) ailPosR=0;
+			analogWrite(speedpinB,map(elePos, 0, -100, 0, map(ailPosR, 0, 100, 255, 0)));
+
+			// spin fan
+			fanSpeed=map(elePos, 0, -100, fanDefault, fanFast);
+			analogWrite(fanPin, fanSpeed);
+			if (debugLevel>0) {
+				Serial.print("B fan=");
+				Serial.println(fanSpeed);
+			}
+			lastMoved=millis();
+		}
+	}
+}
